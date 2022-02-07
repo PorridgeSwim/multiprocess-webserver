@@ -141,10 +141,11 @@ static void showstatistics(int clntSock, int statusCode, struct reqstat* area){
         char body[1000];
         sprintf(body, 
                 "<html><body>\n"
+                "<h1>Request Statistics</h1>"
                 "Number of 2XX : %d \n"
-                "Number of 3XX : %d \n"
-                "Number of 4XX : %d \n" 
-                "Number of 5XX : %d \n"               
+                "<br>Number of 3XX : %d \n"
+                "<br>Number of 4XX : %d \n" 
+                "<br>Number of 5XX : %d \n"               
                 "</body></html>\n", area->num_two, area->num_three, area->num_four, area->num_five);
         strcat(buf, body);
     // }
