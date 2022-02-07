@@ -19,7 +19,7 @@
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
 #define DISK_IO_BUF_SIZE 4096
-
+//structure to store statistics
 struct reqstat {
     int num_two;
     int num_three;
@@ -28,7 +28,6 @@ struct reqstat {
 };
 
 
-struct reqstat* tmpstat;
 
 static void die(const char *message)
 {
@@ -217,7 +216,7 @@ static int handleFileRequest(
     file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
     if(strcmp(statistics, requestURI) == 0){ // send statistics
         statusCode = 200;
-        tmpstat->num_two += 1;
+        area -> num_two += 1;
         showstatistics(clntSock, statusCode, area);
         goto func_end;
     }
@@ -316,6 +315,10 @@ int main(int argc, char *argv[])
     int status;
     pid_t pid;
 
+    /* Aster: area is the shared anonymous memory
+    reqstat is a structure contains 4 fint type data
+    initialize area to [0,0,0,0] before forking*/
+
     struct reqstat *area;
     if((area = mmap(0, sizeof(struct reqstat), PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0)) == MAP_FAILED)
     die("mmap error");
@@ -353,7 +356,6 @@ int main(int argc, char *argv[])
 		char *method      = "";
 		char *requestURI  = "";
 		char *httpVersion = "";
-        tmpstat = (struct reqstat *) area;
 		if (fgets(requestLine, sizeof(requestLine), clntFp) == NULL) {
 		    // socket closed - there isn't much we can do
 		    statusCode = 400; // "Bad Request"
@@ -471,7 +473,7 @@ int main(int argc, char *argv[])
 
 
     } // for (;;)
-
+    free(area);
     return 0;
 }
 
