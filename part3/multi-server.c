@@ -13,6 +13,9 @@
 #include <signal.h>     /* for signal() */
 #include <sys/stat.h>   /* for stat() */
 #include <sys/wait.h>
+#include <sys/mman.h>   /* for mmap */
+#include <semaphore.h>  /* for POSIX semaphore */
+#include <fcntl.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
@@ -23,6 +26,14 @@ static void die(const char *message)
     perror(message);
     exit(1); 
 }
+
+struct reqstat {
+    sem_t sem;
+    int num_two;
+    int num_three;
+    int num_four;
+    int num_five;
+};
 
 /*
  * Create a listening socket bound to the given port.
@@ -110,13 +121,61 @@ static inline const char *getReasonPhrase(int statusCode)
 }
 
 
+
+static void showstatistics(int clntSock, int statusCode, struct reqstat* area){
+     char buf[1000];
+    // const char *reasonPhrase = getReasonPhrase(statusCode);
+
+    // print the status line into the buffer
+    sprintf(buf, "HTTP/1.0 %d ", statusCode);
+    // strcat(buf, "you called stat");
+    strcat(buf, "\r\n");
+
+    // We don't send any HTTP header in this simple server.
+    // We need to send a blank line to signal the end of headers.
+    strcat(buf, "\r\n");
+
+    // For non-200 status, format the status line as an HTML content
+    // so that browers can display it.
+    // if (statusCode != 200) {
+        char body[1000];
+        sprintf(body, 
+                "<html><body>\n"
+                "<h1>Request Statistics</h1>"
+                "Number of 2XX : %d \n"
+                "<br>Number of 3XX : %d \n"
+                "<br>Number of 4XX : %d \n" 
+                "<br>Number of 5XX : %d \n"               
+                "</body></html>\n", area->num_two, area->num_three, area->num_four, area->num_five);
+        strcat(buf, body);
+    // }
+
+    // send the buffer to the browser
+    Send(clntSock, buf);
+}
+
+
 /*
  * Send HTTP status line followed by a blank line.
  */
-static void sendStatusLine(int clntSock, int statusCode)
+static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
 {
     char buf[1000];
     const char *reasonPhrase = getReasonPhrase(statusCode);
+        int startnum;
+    startnum = statusCode/100;
+    if(startnum == 2){
+        area->num_two += 1;
+    }
+    else if(startnum == 3){
+        area->num_three += 1;
+    }
+    else if(startnum == 4){
+        area->num_four += 1;
+    }
+    else if(startnum == 5){
+        area->num_five += 1;
+    }
 
     // print the status line into the buffer
     sprintf(buf, "HTTP/1.0 %d ", statusCode);
@@ -148,8 +207,12 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 	pid_t pid;
 	char line[1000];
 	char command[1000];
-	strcpy(command, "/bin/ls -al ");
-	strcat(command, path);
+    char cmd1[1000];
+    char cmd2[1000];
+    strcpy(command, "/bin/ls");
+	strcpy(cmd1, "ls");
+	strcpy(cmd2, "-al");
+	// strcat(command, path);
 
 	if (pipe(fd) < 0)
 		die("pipe error");
@@ -160,7 +223,8 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 		close(fd[0]);
 		dup2(fd[1],1);
 		close(fd[1]);
-		execlp(command,command , (char *) 0);
+        fprintf(stderr, "command is :%s|\n" , command);
+		execlp(command ,cmd1 , cmd2, (char *) 0);
 		die("can't do ls command");
 	} else {
 		/* parent process */
@@ -178,7 +242,7 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
  * Returns the HTTP status code that was sent to the browser.
  */
 static int handleFileRequest(
-        const char *webRoot, const char *requestURI, int clntSock)
+        const char *webRoot, const char *requestURI, int clntSock, struct reqstat* area)
 {
     int statusCode;
     FILE *fp = NULL;
@@ -187,6 +251,17 @@ static int handleFileRequest(
     // If requestURI ends with '/', append "index.html".
     
     char *file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
+
+    char statistics[11] = "/statistics";
+    sem_wait(&(area->sem));
+    file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
+    if(strcmp(statistics, requestURI) == 0){ // send statistics
+        statusCode = 200;
+        area -> num_two += 1;
+        showstatistics(clntSock, statusCode, area);
+        goto func_end;
+    }
+
     if (file == NULL)
         die("malloc failed");
     strcpy(file, webRoot);
@@ -195,12 +270,14 @@ static int handleFileRequest(
         strcat(file, "index.html");
     }
 
+
     // See if the requested file is a directory.
     // Our server does not support directory listing.
 
     struct stat st;
     if (stat(file, &st) == 0 && S_ISDIR(st.st_mode)) {
 	statusCode = 200; // "OK"
+        area->num_two += 1;
         list_directory(clntSock, file);
         goto func_end;
     }
@@ -210,14 +287,14 @@ static int handleFileRequest(
     fp = fopen(file, "rb");
     if (fp == NULL) {
         statusCode = 404; // "Not Found"
-        sendStatusLine(clntSock, statusCode);
+        sendStatusLine(clntSock, statusCode, area);
         goto func_end;
     }
 
     // Otherwise, send "200 OK" followed by the file content.
 
     statusCode = 200; // "OK"
-    sendStatusLine(clntSock, statusCode);
+    sendStatusLine(clntSock, statusCode, area);
 
     // send the file 
     size_t n;
@@ -243,6 +320,7 @@ func_end:
     if (fp)
         fclose(fp);
 
+    sem_post(&(area->sem));
     return statusCode;
 }
 
@@ -272,6 +350,15 @@ int main(int argc, char *argv[])
 
     int status;
     pid_t pid;
+
+    struct reqstat *area;
+    if((area = mmap(0, sizeof(struct reqstat), PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0)) == MAP_FAILED)
+    die("mmap error");
+    area -> num_two = 0;
+    area -> num_three = 0;
+    area -> num_four = 0;
+    area -> num_five = 0;
+    sem_init(&(area->sem), 1, 1);
 
     for (;;) {
 
@@ -320,14 +407,14 @@ int main(int argc, char *argv[])
 		if (!method || !requestURI || !httpVersion || 
 			extraThingsOnRequestLine) {
 		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode);
+		    sendStatusLine(clntSock, statusCode, area);
 		    goto loop_end;
 		}
 
 		// we only support GET method 
 		if (strcmp(method, "GET") != 0) {
 		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode);
+		    sendStatusLine(clntSock, statusCode, area);
 		    goto loop_end;
 		}
 
@@ -335,14 +422,14 @@ int main(int argc, char *argv[])
 		if (strcmp(httpVersion, "HTTP/1.0") != 0 && 
 		    strcmp(httpVersion, "HTTP/1.1") != 0) {
 		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode);
+		    sendStatusLine(clntSock, statusCode, area);
 		    goto loop_end;
 		}
 		
 		// requestURI must begin with "/"
 		if (!requestURI || *requestURI != '/') {
 		    statusCode = 400; // "Bad Request"
-		    sendStatusLine(clntSock, statusCode);
+		    sendStatusLine(clntSock, statusCode, area);
 		    goto loop_end;
 		}
 
@@ -355,7 +442,7 @@ int main(int argc, char *argv[])
 			    strstr(requestURI, "/../") != NULL)
 		    {
 			statusCode = 400; // "Bad Request"
-			sendStatusLine(clntSock, statusCode);
+			sendStatusLine(clntSock, statusCode, area);
 			goto loop_end;
 		    }
 		}
@@ -382,7 +469,7 @@ int main(int argc, char *argv[])
 		 * Let's handle it.
 		 */
 
-		statusCode = handleFileRequest(webRoot, requestURI, clntSock);
+		statusCode = handleFileRequest(webRoot, requestURI, clntSock, area);
 
 	loop_end:
 
@@ -416,7 +503,7 @@ int main(int argc, char *argv[])
 
 
     } // for (;;)
-
+    free(area);
     return 0;
 }
 
