@@ -14,6 +14,7 @@
 #include <sys/stat.h>   /* for stat() */
 #include <sys/wait.h>
 #include <sys/mman.h>   /* for mmap */
+#include <semaphore.h>  /* for POSIX semaphore */
 #include <fcntl.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
@@ -21,6 +22,7 @@
 #define DISK_IO_BUF_SIZE 4096
 //structure to store statistics
 struct reqstat {
+    sem_t sem;
     int num_two;
     int num_three;
     int num_four;
@@ -174,6 +176,7 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
     else if(startnum == 5){
         area->num_five += 1;
     }
+
     // print the status line into the buffer
     sprintf(buf, "HTTP/1.0 %d ", statusCode);
     strcat(buf, reasonPhrase);
@@ -213,6 +216,7 @@ static int handleFileRequest(
     // If requestURI ends with '/', append "index.html".
     char *file;
     char statistics[11] = "/statistics";
+    sem_wait(&(area->sem));
     file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
     if(strcmp(statistics, requestURI) == 0){ // send statistics
         statusCode = 200;
@@ -284,8 +288,10 @@ func_end:
     free(file);
     if (fp)
         fclose(fp);
-
+    
+    sem_post(&(area->sem));
     return statusCode;
+
 }
 
 
@@ -326,6 +332,7 @@ int main(int argc, char *argv[])
     area -> num_three = 0;
     area -> num_four = 0;
     area -> num_five = 0;
+    sem_init(&(area->sem), 1, 1);
     for (;;) {
 
         /*
@@ -473,6 +480,7 @@ int main(int argc, char *argv[])
 
 
     } // for (;;)
+    // sem_destroy(area -> sem);
     free(area);
     return 0;
 }
