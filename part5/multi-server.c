@@ -354,7 +354,7 @@ loop_end:
 
     // close the client socket 
     fclose(clntFp);
-    free(args)
+    free(args);
     return((void *)0);
 
 }
