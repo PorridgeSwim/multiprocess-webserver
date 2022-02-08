@@ -147,10 +147,10 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 	int fd[2];
 	pid_t pid;
 	char line[1000];
-	char command[12];
-	fd[0] = 3;
-	fd[1] = 1; // this is stdout
-	sprintf(command,"/bin/ls -al");
+	char command[1000];
+	strcpy(command, "/bin/ls -al ");
+	strcat(command, path);
+
 	if (pipe(fd) < 0)
 		die("pipe error");
 	if ((pid = fork()) < 0) {
@@ -158,12 +158,15 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 	} else if (pid == 0) {
 		/* child process */
 		close(fd[0]);
-		execl(path, command, (char *)0);
+		dup2(fd[1],1);
+		close(fd[1]);
+		execlp(command,command , (char *) 0);
 		die("can't do ls command");
 	} else {
 		/* parent process */
 		close(fd[1]);
 		read(fd[0], line, 1000);
+		close(fd[0]);
 		Send(clntSock, line);
 	}
 }
