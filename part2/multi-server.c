@@ -160,7 +160,6 @@ static void showstatistics(int clntSock, int statusCode, struct reqstat* area){
  */
 static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
 {
-    sem_wait(&(area->sem));
     char buf[1000];
     int startnum;
     const char *reasonPhrase = getReasonPhrase(statusCode);
@@ -201,7 +200,6 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
 
     // send the buffer to the browser
     Send(clntSock, buf);
-    sem_post(&(area->sem));
 }
 
 /*
@@ -218,6 +216,7 @@ static int handleFileRequest(
     // If requestURI ends with '/', append "index.html".
     char *file;
     char statistics[11] = "/statistics";
+    sem_wait(&(area->sem));
     file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
     if(strcmp(statistics, requestURI) == 0){ // send statistics
         statusCode = 200;
@@ -289,8 +288,10 @@ func_end:
     free(file);
     if (fp)
         fclose(fp);
-
+    
+    sem_post(&(area->sem));
     return statusCode;
+
 }
 
 
