@@ -223,8 +223,8 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 		close(fd[0]);
 		dup2(fd[1],1);
 		close(fd[1]);
-        fprintf(stderr, "command is :%s|\n" , command);
-		execlp(command ,cmd1 , cmd2, (char *) 0);
+        // fprintf(stderr, "command is :%s|\n" , command);
+		execlp(command ,cmd1 , cmd2, path, (char *) 0);
 		die("can't do ls command");
 	} else {
 		/* parent process */
