@@ -16,6 +16,7 @@
 #include <sys/mman.h>   /* for mmap */
 #include <semaphore.h>  /* for POSIX semaphore */
 #include <fcntl.h>
+#include <errno.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
@@ -163,7 +164,13 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
     char buf[1000];
     int startnum;
     const char *reasonPhrase = getReasonPhrase(statusCode);
-    startnum = statusCode/100;
+    int semres;
+    startnum = statusCode/100;    
+    semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
+    while(EINTR == semres){
+        fprintf(stdout, "interrupted here");
+        semres = sem_wait(&(area->sem));
+    }
     if(startnum == 2){
         area->num_two += 1;
     }
@@ -176,7 +183,7 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
     else if(startnum == 5){
         area->num_five += 1;
     }
-
+    sem_post(&(area->sem));
     // print the status line into the buffer
     sprintf(buf, "HTTP/1.0 %d ", statusCode);
     strcat(buf, reasonPhrase);
@@ -216,11 +223,17 @@ static int handleFileRequest(
     // If requestURI ends with '/', append "index.html".
     char *file;
     char statistics[11] = "/statistics";
-    sem_wait(&(area->sem));
+    int semres;  
     file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
     if(strcmp(statistics, requestURI) == 0){ // send statistics
         statusCode = 200;
+        semres = sem_wait(&(area->sem)); 
+        while(EINTR == semres){
+            fprintf(stdout, "interrupted here");
+            semres = sem_wait(&(area->sem));
+        }
         area -> num_two += 1;
+        sem_post(&(area->sem));
         showstatistics(clntSock, statusCode, area);
         goto func_end;
     }
@@ -288,8 +301,6 @@ func_end:
     free(file);
     if (fp)
         fclose(fp);
-    
-    sem_post(&(area->sem));
     return statusCode;
 
 }

@@ -16,6 +16,7 @@
 #include <sys/mman.h>   /* for mmap */
 #include <semaphore.h>  /* for POSIX semaphore */
 #include <fcntl.h>
+#include <errno.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
@@ -162,7 +163,13 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
 {
     char buf[1000];
     const char *reasonPhrase = getReasonPhrase(statusCode);
-        int startnum;
+    int startnum;
+    int semres;  
+    semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
+    while(EINTR == semres){
+        fprintf(stdout, "interrupted here");
+        semres = sem_wait(&(area->sem));
+    }
     startnum = statusCode/100;
     if(startnum == 2){
         area->num_two += 1;
@@ -176,7 +183,7 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
     else if(startnum == 5){
         area->num_five += 1;
     }
-
+    sem_post(&(area->sem));
     // print the status line into the buffer
     sprintf(buf, "HTTP/1.0 %d ", statusCode);
     strcat(buf, reasonPhrase);
@@ -203,7 +210,7 @@ static void sendStatusLine(int clntSock, int statusCode, struct reqstat* area)
 }
 
 static void list_directory(int clntSock, char *path){ // path is the path of the directory
-	int fd[2];
+	int fd[2]; //0: read end; 1: write end
 	pid_t pid;
 	char line[1000];
 	char command[1000];
@@ -220,15 +227,15 @@ static void list_directory(int clntSock, char *path){ // path is the path of the
 		die("fork error");
 	} else if (pid == 0) {
 		/* child process */
-		close(fd[0]);
-		dup2(fd[1],1);
-		close(fd[1]);
-        fprintf(stderr, "command is :%s|\n" , command);
-		execlp(command ,cmd1 , cmd2, (char *) 0);
+        // close(fd[0]);
+        dup2(fd[1],2);
+        dup2(fd[1],1);
+        close(fd[1]);
+		execlp(command ,cmd1 , cmd2, path, (char *) 0);
 		die("can't do ls command");
 	} else {
 		/* parent process */
-		close(fd[1]);
+		// close(fd[1]);
 		read(fd[0], line, 1000);
 		close(fd[0]);
 		Send(clntSock, line);
@@ -253,11 +260,17 @@ static int handleFileRequest(
     char *file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
 
     char statistics[11] = "/statistics";
-    sem_wait(&(area->sem));
+    int semres;
     file = (char *)malloc(strlen(webRoot) + strlen(requestURI) + 100);
     if(strcmp(statistics, requestURI) == 0){ // send statistics
         statusCode = 200;
+        semres = sem_wait(&(area->sem)); 
+        while(EINTR == semres){
+            fprintf(stdout, "interrupted here");
+            semres = sem_wait(&(area->sem));
+        }
         area -> num_two += 1;
+        sem_post(&(area->sem));
         showstatistics(clntSock, statusCode, area);
         goto func_end;
     }
@@ -273,11 +286,16 @@ static int handleFileRequest(
 
     // See if the requested file is a directory.
     // Our server does not support directory listing.
-
     struct stat st;
     if (stat(file, &st) == 0 && S_ISDIR(st.st_mode)) {
-	statusCode = 200; // "OK"
-        area->num_two += 1;
+	    statusCode = 200; // "OK"
+        semres = sem_wait(&(area->sem)); 
+        while(EINTR == semres){
+            fprintf(stdout, "interrupted here");
+            semres = sem_wait(&(area->sem));
+        }
+        area -> num_two += 1;
+        sem_post(&(area->sem));
         list_directory(clntSock, file);
         goto func_end;
     }
@@ -320,7 +338,6 @@ func_end:
     if (fp)
         fclose(fp);
 
-    sem_post(&(area->sem));
     return statusCode;
 }
 
