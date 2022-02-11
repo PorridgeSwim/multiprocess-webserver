@@ -70,7 +70,7 @@ void queue_destroy(struct queue *q){
         msg = q->first;
         q->first = q->first->next;
         q->length--;
-        free(msg)
+        free(msg);
     }
     q->last = NULL;
     pthread_mutex_unlock(&q->mutex);
@@ -94,6 +94,7 @@ void queue_put(struct queue *q, int sock){
     pthread_mutex_lock(&q->mutex);
     if (q->length==0)
         q->first = pmsg; 
+    q->last->next = pmsg; 
     q->last = pmsg;
     q->length ++;
     pthread_mutex_unlock(&q->mutex);
@@ -115,7 +116,7 @@ int queue_get(struct queue *q){
     // Is this block?
     while(q->first==NULL)
         pthread_cond_wait(&q->cond, &q->mutex);
-    pmsg = q->first
+    pmsg = q->first; 
     sock = pmsg->sock; 
     q->first = pmsg->next;
     if (q->length == 1)
@@ -323,10 +324,11 @@ func_end:
 }
 
 
-// struct args {
-//     int servSock;
-//     const char *webRoot;
-// };
+struct args {
+    int servSock;
+    const char *webRoot;
+    struct queue *q ;
+};
 
 /*
  * Create a function to handle requests
@@ -339,15 +341,17 @@ void * thr_worker(void *arg)
     char requestLine[1000];
     int statusCode;
     int clntSock; 
+    // int servSock;
     struct args *args;
     struct sockaddr_in clntAddr;
     const char *webRoot;
     args = (struct args *)arg; 
+    struct queue *q ; 
 
-    servSock = args->servSock;
+    // servSock = args->servSock;
     webRoot = args->webRoot;
-
-    clntSock = queue_get(struct queue *q); 
+    q = args->q;
+    clntSock = queue_get(q); 
     if (clntSock < 0)
         die("queue_get failed"); 
 
