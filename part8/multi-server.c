@@ -484,14 +484,13 @@ loop_end:
 
 }
 
-
 int main(int argc, char *argv[])
 {
     
     int i = 0; 
     struct args *args; 
     int err;
-    int nfds;
+    int nfds = 3;
     fd_set readfds;
     fd_set prev_readfds;
     // fd_set *restrict writefds; //not interested?
@@ -505,13 +504,12 @@ int main(int argc, char *argv[])
     // send() on a disconnected socket.
     if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
         die("signal() failed");
-
-
     if (argc < 3) {
         fprintf(stderr,
             "usage: %s <server_port> [<server_port> ...] <web_root>\n",
             argv[0]);
         exit(1);
+    
     }
     nfds = argc + 1;
     int servSocks[32];
@@ -556,8 +554,7 @@ int main(int argc, char *argv[])
 
         // initialize the in-out parameter
         unsigned int clntLen = sizeof(clntAddr); 
-        int servs;
-        // int servs = 0;
+        int servs = 0;
         while(servs == 0){
             servs = select(nfds, &readfds, NULL, NULL, NULL);
         }
@@ -574,6 +571,7 @@ int main(int argc, char *argv[])
     } // for (;;)
     queue_destroy(sock_queue);
     free(sock_queue);
-
+    // if (signal(SIGINT, sig_int) == SIG_ERR)
+    //     die("signal(SIGINT) error");
     return 0;
 }
