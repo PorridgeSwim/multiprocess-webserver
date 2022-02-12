@@ -231,7 +231,6 @@ struct args {
  */
 void * thr_fn(void *arg)
 {
-    pthread_detach(pthread_self());
     char line[1000];
     char requestLine[1000];
     int statusCode;
@@ -410,8 +409,6 @@ int main(int argc, char *argv[])
         struct args *args; 
 
         args = malloc(sizeof(*args));
-        // args->clntAddr = clntAddr; 
-        // args->clntSock = clntSock;
         args->webRoot = webRoot; 
         args->servSock = servSock; 
 
