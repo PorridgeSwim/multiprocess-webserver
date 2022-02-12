@@ -66,7 +66,7 @@ void queue_destroy(struct queue *q){
 
     //lock
     pthread_mutex_lock(&q->mutex);
-    while (q->first != NULL){
+    while (q->length != 0){
         msg = q->first;
         q->first = q->first->next;
         q->length--;
@@ -84,7 +84,7 @@ void queue_destroy(struct queue *q){
 // put a message into the queue and wake up workers if necessary
 void queue_put(struct queue *q, int sock){
     struct message *pmsg;
-    pmsg = malloc(sizeof(*pmsg));
+    pmsg = (struct message *)malloc(sizeof(*pmsg));
     if (pmsg == NULL)
         die("malloc failed");
     pmsg->sock = sock;
@@ -94,14 +94,15 @@ void queue_put(struct queue *q, int sock){
     pthread_mutex_lock(&q->mutex);
     if (q->length==0)
         q->first = pmsg; 
-    q->last->next = pmsg; 
+    else 
+        q->last->next = pmsg; 
     q->last = pmsg;
     q->length ++;
     pthread_mutex_unlock(&q->mutex);
 
     // how to wake up workers?
-    if(pthread_cond_broadcast(&q->cond)!=0)
-        die("pthread_cond_broadcast failed");
+    if(pthread_cond_signal(&q->cond)!=0)
+        die("pthread_cond_signal failed");
 
 };
 
@@ -114,7 +115,7 @@ int queue_get(struct queue *q){
     pthread_mutex_lock(&q->mutex);
 
     // Is this block?
-    while(q->first==NULL)
+    while(q->length == 0)
         pthread_cond_wait(&q->cond, &q->mutex);
     pmsg = q->first; 
     sock = pmsg->sock; 
@@ -325,7 +326,6 @@ func_end:
 
 
 struct args {
-    int servSock;
     const char *webRoot;
     struct queue *q ;
 };
@@ -341,23 +341,28 @@ void * thr_worker(void *arg)
     char requestLine[1000];
     int statusCode;
     int clntSock; 
-    // int servSock;
     struct args *args;
     struct sockaddr_in clntAddr;
     const char *webRoot;
-    args = (struct args *)arg; 
     struct queue *q ; 
+    args = (struct args *)arg; 
 
     // servSock = args->servSock;
     webRoot = args->webRoot;
     q = args->q;
-    clntSock = queue_get(q); 
-    if (clntSock < 0)
-        die("queue_get failed"); 
-
 
     for(;;){
 
+        // There is a while loop in this function, it will wait until there is a socket comming 
+        clntSock = queue_get(q); 
+
+        if (clntSock < 0)
+            die("queue_get failed"); 
+
+        // We should get client address from client socket
+        unsigned int clntLen = sizeof(clntAddr); 
+        if(getsockname(clntSock, (struct sockaddr *)&clntAddr, &clntLen) != 0)
+            die("getsockname failed");
 
 
         // This is the first command after accept in original main
@@ -433,6 +438,7 @@ void * thr_worker(void *arg)
          * Now let's skip all headers.
          */
 
+
         while (1) {
             if (fgets(line, sizeof(line), clntFp) == NULL) {
                 // socket closed prematurely - there isn't much we can do
@@ -481,8 +487,14 @@ loop_end:
 
 int main(int argc, char *argv[])
 {
-    // Create an index
+    
     int i = 0; 
+    struct args *args; 
+    int err;
+
+    struct queue *sock_queue; 
+    sock_queue = (struct queue *)malloc(sizeof(*sock_queue)); 
+    queue_init(sock_queue); 
 
     // Ignore SIGPIPE so that we don't terminate when we call
     // send() on a disconnected socket.
@@ -499,15 +511,25 @@ int main(int argc, char *argv[])
 
     int servSock = createServerSocket(servPort);
 
-    // char line[1000];
-    // char requestLine[1000];
-    // int statusCode;
     struct sockaddr_in clntAddr;
 
-    void *tret; 
+    args = (struct args *)malloc(sizeof(*args));
+    args->webRoot = webRoot; 
+    args->q = sock_queue; 
 
 
-    for (; i<N_THREADS; i++) {
+
+
+    // create thread
+    for (i=0; i<N_THREADS; i++) {
+        err = pthread_create(&thread_pool[i], NULL, thr_worker, args);
+        if (err != 0)
+            die("can’t create thread");
+
+    } // for (; i<N_THREADS; i++)
+
+
+    for (;;){
 
         /*
          * wait for a client to connect
@@ -518,35 +540,12 @@ int main(int argc, char *argv[])
         int clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
         if (clntSock < 0)
             die("accept() failed");
-
-        // puts the client socket descriptor into a blocking queue
         
+        queue_put(sock_queue, clntSock); 
 
-
-        // wakes up the worker threads which have been blocked waiting for client requests to handle
-        
-
-        
-        int err;
-        struct args *args; 
-
-        args = malloc(sizeof(*args));
-        // args->clntAddr = clntAddr; 
-        // args->clntSock = clntSock;
-        args->webRoot = webRoot; 
-        args->servSock = servSock; 
-
-
-        err = pthread_create(&thread_pool[i], NULL, thr_worker, args);
-        if (err != 0)
-            die("can’t create thread");
-
-        err = pthread_join(thread_pool[i], &tret); 
-        if (err != 0)
-            die("can’t join with thread");
-
-
-    } 
+    } // for (;;)
+    queue_destroy(sock_queue);
+    free(sock_queue);
 
     return 0;
 }
