@@ -493,6 +493,7 @@ int main(int argc, char *argv[])
     int err;
     int nfds;
     fd_set readfds;
+    fd_set prev_readfds;
     // fd_set *restrict writefds; //not interested?
     // fd_set *restrict exceptfds;
     const char *webRoot;
@@ -505,10 +506,6 @@ int main(int argc, char *argv[])
     if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
         die("signal() failed");
 
-    // if (argc != 3) {
-    //     fprintf(stderr, "usage: %s <server_port> <web_root>\n", argv[0]);
-    //     exit(1);
-    // }
 
     if (argc < 3) {
         fprintf(stderr,
@@ -529,7 +526,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "servsocks: %d : %d \n", servSocks[i-1], atoi(argv[i]));
     }
     webRoot = argv[argc - 1];
-
+    prev_readfds = readfds;
     // unsigned short servPort = atoi(argv[1]);
     // const char *webRoot = argv[2];
  
@@ -554,17 +551,18 @@ int main(int argc, char *argv[])
         /*
          * wait for a client to connect
          */
+
         //find a server socket with a client pending 
 
         // initialize the in-out parameter
         unsigned int clntLen = sizeof(clntAddr); 
-        int servs = 0;
+        int servs;
+        // int servs = 0;
         while(servs == 0){
             servs = select(nfds, &readfds, NULL, NULL, NULL);
         }
         for(int validfd = 1; validfd <= nfds; validfd ++){
             if (FD_ISSET(validfd, &readfds)){
-                fprintf(stderr, "nowvalfd: %d \n", validfd);
                 int clntSock = accept(validfd, (struct sockaddr *)&clntAddr, &clntLen);
                 if (clntSock < 0)
                     die("accept() failed");
@@ -572,6 +570,7 @@ int main(int argc, char *argv[])
                 // break;
             }
         }
+        readfds = prev_readfds;
     } // for (;;)
     queue_destroy(sock_queue);
     free(sock_queue);
