@@ -28,6 +28,111 @@ static void die(const char *message)
 }
 
 /*
+ * A message in a blocking queue
+ */
+struct message {
+    int sock; // Payload, in our case a new client connection
+    struct message *next; // Next message on the list
+};
+
+/*
+ * This structure implements a blocking queue.
+ * If a thread attempts to pop an item from an empty queue
+ * it is blocked until another thread appends a new item.
+ */
+struct queue {
+    pthread_mutex_t mutex; // mutex used to protect the queue
+    pthread_cond_t cond;   // condition variable for threads to sleep on
+    struct message *first; // first message in the queue
+    struct message *last;  // last message in the queue
+    unsigned int length;   // number of elements on the queue
+};
+
+
+// initializes the members of struct queue
+void queue_init(struct queue *q){
+    if(pthread_mutex_init(&q->mutex, NULL) != 0)
+        die("mutex destruction failed"); 
+    if(pthread_cond_init(&q->cond, NULL) != 0)
+        die("cond destruction failed"); 
+    q->first = NULL; 
+    q->last = NULL; 
+    q->length = 0; 
+};
+
+// deallocate and destroy everything in the queue
+void queue_destroy(struct queue *q){
+    struct message *msg;
+
+    //lock
+    pthread_mutex_lock(&q->mutex);
+    while (q->length != 0){
+        msg = q->first;
+        q->first = q->first->next;
+        q->length--;
+        free(msg);
+    }
+    q->last = NULL;
+    pthread_mutex_unlock(&q->mutex);
+
+    if(pthread_mutex_destroy(&q->mutex) != 0)
+        die("mutex destroy failed"); 
+    if(pthread_cond_destroy(&q->cond) != 0)
+        die("cond initialization failed"); 
+};
+
+// put a message into the queue and wake up workers if necessary
+void queue_put(struct queue *q, int sock){
+    struct message *pmsg;
+    pmsg = (struct message *)malloc(sizeof(*pmsg));
+    if (pmsg == NULL)
+        die("malloc failed");
+    pmsg->sock = sock;
+    pmsg->next = NULL;
+
+    //lock
+    pthread_mutex_lock(&q->mutex);
+    if (q->length==0)
+        q->first = pmsg; 
+    else 
+        q->last->next = pmsg; 
+    q->last = pmsg;
+    q->length ++;
+    pthread_mutex_unlock(&q->mutex);
+
+    // how to wake up workers?
+    if(pthread_cond_signal(&q->cond)!=0)
+        die("pthread_cond_signal failed");
+
+};
+
+// take a socket descriptor from the queue; block if necessary
+int queue_get(struct queue *q){
+    int sock;
+    struct message *pmsg;
+
+    // lock
+    pthread_mutex_lock(&q->mutex);
+
+    // Is this block?
+    while(q->length == 0)
+        pthread_cond_wait(&q->cond, &q->mutex);
+    pmsg = q->first; 
+    sock = pmsg->sock; 
+    q->first = pmsg->next;
+    if (q->length == 1)
+        q->last = NULL;
+    q->length --;
+    pthread_mutex_unlock(&q->mutex);
+    free(pmsg);
+    return sock; 
+    
+};
+
+
+
+
+/*
  * Create a listening socket bound to the given port.
  */
 static int createServerSocket(unsigned short port)
@@ -221,40 +326,44 @@ func_end:
 
 
 struct args {
-    int servSock;
     const char *webRoot;
+    struct queue *q ;
 };
 
 /*
  * Create a function to handle requests
  * As there are more than one argument, arg should be an struct
  */
-void * thr_fn(void *arg)
+void * thr_worker(void *arg)
 {
+    pthread_detach(pthread_self());
     char line[1000];
     char requestLine[1000];
     int statusCode;
-    int servSock; 
+    int clntSock; 
     struct args *args;
     struct sockaddr_in clntAddr;
     const char *webRoot;
+    struct queue *q ; 
     args = (struct args *)arg; 
 
-    servSock = args->servSock;
+    // servSock = args->servSock;
     webRoot = args->webRoot;
-
+    q = args->q;
 
     for(;;){
 
-        /*
-         * wait for a client to connect
-         */
+        // There is a while loop in this function, it will wait until there is a socket comming 
+        clntSock = queue_get(q); 
 
-        // initialize the in-out parameter
-        unsigned int clntLen = sizeof(clntAddr); 
-        int clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
         if (clntSock < 0)
-            die("accept() failed");
+            die("queue_get failed"); 
+
+        // We should get client address from client socket
+        unsigned int clntLen = sizeof(clntAddr); 
+        if(getsockname(clntSock, (struct sockaddr *)&clntAddr, &clntLen) != 0)
+            die("getsockname failed");
+
 
         // This is the first command after accept in original main
         FILE *clntFp = fdopen(clntSock, "r");
@@ -329,6 +438,7 @@ void * thr_fn(void *arg)
          * Now let's skip all headers.
          */
 
+
         while (1) {
             if (fgets(line, sizeof(line), clntFp) == NULL) {
                 // socket closed prematurely - there isn't much we can do
@@ -377,8 +487,14 @@ loop_end:
 
 int main(int argc, char *argv[])
 {
-    // Create an index
+    
     int i = 0; 
+    struct args *args; 
+    int err;
+
+    struct queue *sock_queue; 
+    sock_queue = (struct queue *)malloc(sizeof(*sock_queue)); 
+    queue_init(sock_queue); 
 
     // Ignore SIGPIPE so that we don't terminate when we call
     // send() on a disconnected socket.
@@ -395,34 +511,41 @@ int main(int argc, char *argv[])
 
     int servSock = createServerSocket(servPort);
 
-    // char line[1000];
-    // char requestLine[1000];
-    // int statusCode;
-    // struct sockaddr_in clntAddr;
+    struct sockaddr_in clntAddr;
 
-    void *tret; 
-
-
-    for (; i<N_THREADS; i++) {
-        
-        int err;
-        struct args *args; 
-
-        args = malloc(sizeof(*args));
-        args->webRoot = webRoot; 
-        args->servSock = servSock; 
+    args = (struct args *)malloc(sizeof(*args));
+    args->webRoot = webRoot; 
+    args->q = sock_queue; 
 
 
-        err = pthread_create(&thread_pool[i], NULL, thr_fn, args);
+
+
+    // create thread
+    for (i=0; i<N_THREADS; i++) {
+        err = pthread_create(&thread_pool[i], NULL, thr_worker, args);
         if (err != 0)
             die("can’t create thread");
 
-        err = pthread_join(thread_pool[i], &tret); 
-        if (err != 0)
-            die("can’t join with thread");
+    } // for (; i<N_THREADS; i++)
 
 
-    } 
+    for (;;){
+
+        /*
+         * wait for a client to connect
+         */
+
+        // initialize the in-out parameter
+        unsigned int clntLen = sizeof(clntAddr); 
+        int clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
+        if (clntSock < 0)
+            die("accept() failed");
+        
+        queue_put(sock_queue, clntSock); 
+
+    } // for (;;)
+    queue_destroy(sock_queue);
+    free(sock_queue);
 
     return 0;
 }
