@@ -353,6 +353,87 @@ func_end:
 }
 
 
+// Send clntSock through sock.
+// sock is a UNIX domain socket.
+static void sendConnection(int clntSock, int sock)
+{
+    struct msghdr msg;
+    struct iovec iov[1];
+
+    union {
+        struct cmsghdr cm;
+        char control[CMSG_SPACE(sizeof(int))];
+    } ctrl_un = {0};
+    struct cmsghdr *cmptr;
+
+    msg.msg_control = ctrl_un.control;
+    msg.msg_controllen = sizeof(ctrl_un.control);
+
+    cmptr = CMSG_FIRSTHDR(&msg);
+    cmptr->cmsg_len = CMSG_LEN(sizeof(int));
+    cmptr->cmsg_level = SOL_SOCKET;
+    cmptr->cmsg_type = SCM_RIGHTS;
+    *((int *) CMSG_DATA(cmptr)) = clntSock;
+
+    msg.msg_name = NULL;
+    msg.msg_namelen = 0;
+
+    iov[0].iov_base = "FD";
+    iov[0].iov_len = 2;
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 1;
+
+    if (sendmsg(sock, &msg, 0) != 2)
+        die("Failed to send connection to child");
+}
+
+// Returns an open file descriptor received through sock.
+// sock is a UNIX domain socket.
+static int recvConnection(int sock)
+{
+    struct msghdr msg;
+    struct iovec iov[1];
+    ssize_t n;
+    char buf[64];
+
+    union {
+        struct cmsghdr cm;
+        char control[CMSG_SPACE(sizeof(int))];
+    } ctrl_un;
+    struct cmsghdr *cmptr;
+
+    msg.msg_control = ctrl_un.control;
+    msg.msg_controllen = sizeof(ctrl_un.control);
+
+    msg.msg_name = NULL;
+    msg.msg_namelen = 0;
+
+    iov[0].iov_base = buf;
+    iov[0].iov_len = sizeof(buf);
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 1;
+
+    for (;;) {
+        n = recvmsg(sock, &msg, 0);
+        if (n == -1) {
+            if (errno == EINTR)
+                continue;
+            die("Error in recvmsg");
+        }
+        // Messages with client connections are always sent with
+        // "FD" as the message. Silently skip unsupported messages.
+        if (n != 2 || buf[0] != 'F' || buf[1] != 'D')
+            continue;
+
+        if ((cmptr = CMSG_FIRSTHDR(&msg)) != NULL
+            && cmptr->cmsg_len == CMSG_LEN(sizeof(int))
+            && cmptr->cmsg_level == SOL_SOCKET
+            && cmptr->cmsg_type == SCM_RIGHTS)
+            return *((int *) CMSG_DATA(cmptr));
+    }
+}
+
+
 
 int main(int argc, char *argv[])
 { 
@@ -379,6 +460,10 @@ int main(int argc, char *argv[])
 
     // int status;
     pid_t pid;
+    int sockfd[8]; 
+    // int socks[N_CHILDREN];
+    // if ((sock = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0)
+    //     die("socket failed");
 
     key = 0;	// which means that we skip the send stat in parent process
 
@@ -400,24 +485,25 @@ int main(int argc, char *argv[])
         die("ignore error");
     //if (signal(SIGUSR1, sig_int) == SIG_ERR)
 //		die("signal error");
+    int i ;
+    for(i=0; i<N_CHILDREN; i++){
+        if (socketpair(AF_UNIX, SOCK_DGRAM, 0, &sockfd[2*i]) != 0)
+        die("socketpair error");
+    }
+
+
     for(int i = 0; i < N_CHILDREN; i++){   
-forkhere:
         if ((pid = fork()) < 0){
             die("fork error");
-        }else if (pid == 0){ // child
+        }
+        else if (pid == 0){ // child
+
+            close(sockfd[2*i]); // close parent
+
             for (;;) {
-                /*
-                * wait for a client to connect
-                */
-                // initialize the in-out parameter
-            unsigned int clntLen = sizeof(clntAddr); 
-            int clntSock;
-            clntLen = sizeof(clntAddr);
-                clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
-            
-            if (clntSock < 0) {
-                die("accept failed");
-            }
+
+            // receive socket
+            int clntSock = recvConnection(sockfd[2*i+1]); 
 
             FILE *clntFp = fdopen(clntSock, "r");
             if (clntFp == NULL)
@@ -538,49 +624,75 @@ forkhere:
                 // close the client socket 
                 fclose(clntFp);
                 // exit(0);
-            }
+            } // for(;;)
             /* parent */
             // close the client socket
             // fclose(clntFp);
-        }
+        } // elseif
     // free(area);
     // fprintf(stderr, "parent \n");
 
+    } // for(int i = 0; i < N_CHILDREN; i++)
+
+    //parent 
+
+    int counter = 0;
+    int child_id ;
+    for (;;){
+        /*
+        * wait for a client to connect
+        */
+        // initialize the in-out parameter
+        unsigned int clntLen = sizeof(clntAddr); 
+        int clntSock;
+        clntLen = sizeof(clntAddr);
+        clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);          
+        if (clntSock < 0) {
+            die("accept failed");
+        }
+
+        // how to store socks
+
+        // need to send the sock to a specific child process
+        // chosen by round robin
+        child_id = counter%N_CHILDREN; 
+
+        // send clntSock to child_id th process 
+        sendConnection(clntSock, sockfd[2*child_id]); 
+        counter++; 
+        close(clntSock); 
+
     }
-    //parent
     if (sigaction(SIGUSR1, &act, &oact) < 0)
         die("signal error");
 
     // for(int j = 0; j < 4; j++){
+
 waitstart:
-    if((pid = waitpid(-1, NULL, 0)) < 0){
-        // die("waitpid error");
-        if (key == 1){ //interrupt
-            // for(int j = 0; j < 4; j++){
-            //     if((pid = waitpid(-1, NULL, 0)) < 0)
-            //     die("waitpid error");
-            // }
-            semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
-            while(EINTR == semres){
-                fflush(stdout);
-                fprintf(stdout, "interrupted here");
-                semres = sem_wait(&(area->sem));
-            }
-            fprintf(stderr, "Request Statistics\n"
-                    "Number of 2XX : %d \n"
-                    "Number of 3XX : %d \n"
-                    "Number of 4XX : %d \n"
-                    "Number of 5XX : %d \n"
-                    "Sum : %d \n",
-                    area->num_two, area->num_three, area->num_four, area->num_five, area->num_two + area->num_three + area->num_four + area->num_five);
-                sem_post(&(area->sem));
-            key = 0;
-            goto waitstart;
+    // die("waitpid error");
+    if (key == 1){ //interrupt
+        // for(int j = 0; j < 4; j++){
+        //     if((pid = waitpid(-1, NULL, 0)) < 0)
+        //     die("waitpid error");
+        // }
+        semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
+        while(EINTR == semres){
+            fflush(stdout);
+            fprintf(stdout, "interrupted here");
+            semres = sem_wait(&(area->sem));
         }
+        fprintf(stderr, "Request Statistics\n"
+                "Number of 2XX : %d \n"
+                "Number of 3XX : %d \n"
+                "Number of 4XX : %d \n"
+                "Number of 5XX : %d \n"
+                "Sum : %d \n",
+                area->num_two, area->num_three, area->num_four, area->num_five, area->num_two + area->num_three + area->num_four + area->num_five);
+            sem_post(&(area->sem));
+        key = 0;
+        goto waitstart;
     }
-    else{
-        goto forkhere;
-    }
+
      //all end then end
     munmap(area, sizeof(*area));
     return 0;
