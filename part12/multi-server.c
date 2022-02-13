@@ -377,7 +377,7 @@ int main(int argc, char *argv[])
     struct sockaddr_in clntAddr;
     int semres;
 
-    int status;
+    // int status;
     pid_t pid;
 
     key = 0;	// which means that we skip the send stat in parent process
@@ -396,183 +396,193 @@ int main(int argc, char *argv[])
     act.sa_flags = 0;
     if (sigaction(SIGUSR1, &act, &oact) < 0)
         die("signal error");
-	
+    if(signal(SIGUSR1, SIG_IGN) < 0)
+        die("ignore error");
     //if (signal(SIGUSR1, sig_int) == SIG_ERR)
 //		die("signal error");
+    for(int i = 0; i < N_CHILDREN; i++){   
+forkhere:
+        if ((pid = fork()) < 0){
+            die("fork error");
+        }else if (pid == 0){ // child
+            for (;;) {
+                /*
+                * wait for a client to connect
+                */
+                // initialize the in-out parameter
+            unsigned int clntLen = sizeof(clntAddr); 
+            int clntSock;
+            clntLen = sizeof(clntAddr);
+                clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
+            
+            if (clntSock < 0) {
+                die("accept failed");
+            }
 
-    for(int i = 0; i < N_CHILDREN; i++){
-    if ((pid = fork()) < 0){
-        die("fork error");
-	}else if (pid == 0){ // child
-    for (;;) {
+            FILE *clntFp = fdopen(clntSock, "r");
+            if (clntFp == NULL)
+                die("fdopen failed");
 
-        /*
-         * wait for a client to connect
-         */
+            //     if ((pid = fork()) < 0){
+            // 	die("fork error");
+            // }else if (pid == 0){	/* child */
 
-	// initialize the in-out parameter
-     	unsigned int clntLen = sizeof(clntAddr); 
-	int clntSock;
-acc:
-	clntLen = sizeof(clntAddr);
-        clntSock = accept(servSock, (struct sockaddr *)&clntAddr, &clntLen);
-	
-	if (clntSock < 0) {
-		if (errno == EINTR && key == 1){
-			semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
-			while(EINTR == semres){
-				fflush(stdout);
-				fprintf(stdout, "interrupted here");
-				semres = sem_wait(&(area->sem));
-			}
-			fprintf(stderr, "Request Statistics\n"
-					"Number of 2XX : %d \n"
-					"Number of 3XX : %d \n"
-					"Number of 4XX : %d \n"
-					"Number of 5XX : %d \n"
+            // cose the serve socket
+            // close(servSock);
+
+            /*
+            * Let's parse the request line.
+            */
+
+            char *method      = "";
+            char *requestURI  = "";
+            char *httpVersion = "";
+
+            if (fgets(requestLine, sizeof(requestLine), clntFp) == NULL) {
+                // socket closed - there isn't much we can do
+                statusCode = 400; // "Bad Request"
+                goto loop_end;
+            }
+
+            char *token_separators = "\t \r\n"; // tab, space, new line
+            method = strtok(requestLine, token_separators);
+            requestURI = strtok(NULL, token_separators);
+            httpVersion = strtok(NULL, token_separators);
+            char *extraThingsOnRequestLine = strtok(NULL, token_separators);
+
+            // check if we have 3 (and only 3) things in the request line
+            if (!method || !requestURI || !httpVersion || 
+                extraThingsOnRequestLine) {
+                statusCode = 501; // "Not Implemented"
+                sendStatusLine(clntSock, statusCode, area);
+                goto loop_end;
+            }
+
+            // we only support GET method 
+            if (strcmp(method, "GET") != 0) {
+                statusCode = 501; // "Not Implemented"
+                sendStatusLine(clntSock, statusCode, area);
+                goto loop_end;
+            }
+
+            // we only support HTTP/1.0 and HTTP/1.1
+            if (strcmp(httpVersion, "HTTP/1.0") != 0 && 
+                strcmp(httpVersion, "HTTP/1.1") != 0) {
+                statusCode = 501; // "Not Implemented"
+                sendStatusLine(clntSock, statusCode, area);
+                goto loop_end;
+            }
+            
+            // requestURI must begin with "/"
+            if (!requestURI || *requestURI != '/') {
+                statusCode = 400; // "Bad Request"
+                sendStatusLine(clntSock, statusCode, area);
+                goto loop_end;
+            }
+
+            // make sure that the requestURI does not contain "/../" and 
+            // does not end with "/..", which would be a big security hole!
+            int len = strlen(requestURI);
+            if (len >= 3) {
+                char *tail = requestURI + (len - 3);
+                if (strcmp(tail, "/..") == 0 || 
+                    strstr(requestURI, "/../") != NULL)
+                {
+                statusCode = 400; // "Bad Request"
+                sendStatusLine(clntSock, statusCode, area);
+                goto loop_end;
+                }
+            }
+
+            /*
+            * Now let's skip all headers.
+            */
+
+            while (1) {
+                if (fgets(line, sizeof(line), clntFp) == NULL) {
+                // socket closed prematurely - there isn't much we can do
+                statusCode = 400; // "Bad Request"
+                goto loop_end;
+                }
+                if (strcmp("\r\n", line) == 0 || strcmp("\n", line) == 0) {
+                // This marks the end of headers.  
+                // Break out of the while loop.
+                break;
+                }
+            }
+
+            /*
+            * At this point, we have a well-formed HTTP GET request.
+            * Let's handle it.
+            */
+
+            statusCode = handleFileRequest(webRoot, requestURI, clntSock, area);
+
+        loop_end:
+
+            /*
+            * Done with client request.
+            * Log it, close the client socket, and go back to accepting
+            * connection.
+            */
+            
+            fprintf(stderr, "%s (%d) \"%s %s %s\" %d %s\n",
+                inet_ntoa(clntAddr.sin_addr),
+                getpid(),
+                method,
+                requestURI,
+                httpVersion,
+                statusCode,
+                getReasonPhrase(statusCode));
+
+                // close the client socket 
+                fclose(clntFp);
+                // exit(0);
+            }
+            /* parent */
+            // close the client socket
+            // fclose(clntFp);
+        }
+    // free(area);
+    // fprintf(stderr, "parent \n");
+
+    }
+    //parent
+    if (sigaction(SIGUSR1, &act, &oact) < 0)
+        die("signal error");
+
+    // for(int j = 0; j < 4; j++){
+waitstart:
+    if((pid = waitpid(-1, NULL, 0)) < 0){
+        // die("waitpid error");
+        if (key == 1){ //interrupt
+            // for(int j = 0; j < 4; j++){
+            //     if((pid = waitpid(-1, NULL, 0)) < 0)
+            //     die("waitpid error");
+            // }
+            semres = sem_wait(&(area->sem)); // check return value it is waiting the sem to be larger than 0
+            while(EINTR == semres){
+                fflush(stdout);
+                fprintf(stdout, "interrupted here");
+                semres = sem_wait(&(area->sem));
+            }
+            fprintf(stderr, "Request Statistics\n"
+                    "Number of 2XX : %d \n"
+                    "Number of 3XX : %d \n"
+                    "Number of 4XX : %d \n"
+                    "Number of 5XX : %d \n"
                     "Sum : %d \n",
                     area->num_two, area->num_three, area->num_four, area->num_five, area->num_two + area->num_three + area->num_four + area->num_five);
                 sem_post(&(area->sem));
-			key = 0;
-			goto acc;
-		} else{
-			die("accept failed");
-		}
-	}
-
-
-        FILE *clntFp = fdopen(clntSock, "r");
-        if (clntFp == NULL)
-            die("fdopen failed");
-
-    //     if ((pid = fork()) < 0){
-	// 	die("fork error");
-	// }else if (pid == 0){	/* child */
-
-		// cose the serve socket
-		close(servSock);
-
-		/*
-		 * Let's parse the request line.
-		 */
-
-		char *method      = "";
-		char *requestURI  = "";
-		char *httpVersion = "";
-
-		if (fgets(requestLine, sizeof(requestLine), clntFp) == NULL) {
-		    // socket closed - there isn't much we can do
-		    statusCode = 400; // "Bad Request"
-		    goto loop_end;
-		}
-
-		char *token_separators = "\t \r\n"; // tab, space, new line
-		method = strtok(requestLine, token_separators);
-		requestURI = strtok(NULL, token_separators);
-		httpVersion = strtok(NULL, token_separators);
-		char *extraThingsOnRequestLine = strtok(NULL, token_separators);
-
-		// check if we have 3 (and only 3) things in the request line
-		if (!method || !requestURI || !httpVersion || 
-			extraThingsOnRequestLine) {
-		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode, area);
-		    goto loop_end;
-		}
-
-		// we only support GET method 
-		if (strcmp(method, "GET") != 0) {
-		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode, area);
-		    goto loop_end;
-		}
-
-		// we only support HTTP/1.0 and HTTP/1.1
-		if (strcmp(httpVersion, "HTTP/1.0") != 0 && 
-		    strcmp(httpVersion, "HTTP/1.1") != 0) {
-		    statusCode = 501; // "Not Implemented"
-		    sendStatusLine(clntSock, statusCode, area);
-		    goto loop_end;
-		}
-		
-		// requestURI must begin with "/"
-		if (!requestURI || *requestURI != '/') {
-		    statusCode = 400; // "Bad Request"
-		    sendStatusLine(clntSock, statusCode, area);
-		    goto loop_end;
-		}
-
-		// make sure that the requestURI does not contain "/../" and 
-		// does not end with "/..", which would be a big security hole!
-		int len = strlen(requestURI);
-		if (len >= 3) {
-		    char *tail = requestURI + (len - 3);
-		    if (strcmp(tail, "/..") == 0 || 
-			    strstr(requestURI, "/../") != NULL)
-		    {
-			statusCode = 400; // "Bad Request"
-			sendStatusLine(clntSock, statusCode, area);
-			goto loop_end;
-		    }
-		}
-
-		/*
-		 * Now let's skip all headers.
-		 */
-
-		while (1) {
-		    if (fgets(line, sizeof(line), clntFp) == NULL) {
-			// socket closed prematurely - there isn't much we can do
-			statusCode = 400; // "Bad Request"
-			goto loop_end;
-		    }
-		    if (strcmp("\r\n", line) == 0 || strcmp("\n", line) == 0) {
-			// This marks the end of headers.  
-			// Break out of the while loop.
-			break;
-		    }
-		}
-
-		/*
-		 * At this point, we have a well-formed HTTP GET request.
-		 * Let's handle it.
-		 */
-
-		statusCode = handleFileRequest(webRoot, requestURI, clntSock, area);
-
-	loop_end:
-
-		/*
-		 * Done with client request.
-		 * Log it, close the client socket, and go back to accepting
-		 * connection.
-		 */
-		
-		fprintf(stderr, "%s (%d) \"%s %s %s\" %d %s\n",
-			inet_ntoa(clntAddr.sin_addr),
-			getpid(),
-			method,
-			requestURI,
-			httpVersion,
-			statusCode,
-			getReasonPhrase(statusCode));
-
-		// close the client socket 
-		fclose(clntFp);
-		exit(0);
-	}
-
-	/* parent */
-	// close the client socket
-	// fclose(clntFp);
-
+            key = 0;
+            goto waitstart;
+        }
     }
-    // free(area);
-        // fprintf(stderr, "parent \n");
-    if ((pid = waitpid(-1, &status, WNOHANG)) < 0)
-        die("waitpid error");
-    } 
+    else{
+        goto forkhere;
+    }
      //all end then end
+    munmap(area, sizeof(*area));
     return 0;
 }
 

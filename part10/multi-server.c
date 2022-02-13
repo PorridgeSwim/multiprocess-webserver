@@ -155,7 +155,9 @@ static void showstatistics(int clntSock, int statusCode, struct reqstat* area){
                 "<br>Number of 3XX : %d \n"
                 "<br>Number of 4XX : %d \n" 
                 "<br>Number of 5XX : %d \n"
-		"</body></html>\n", area->num_two, area->num_three, area->num_four, area->num_five);
+                "<br>Sum : %d \n"      
+                "</body></html>\n",
+                area->num_two, area->num_three, area->num_four, area->num_five, area->num_two + area->num_three + area->num_four + area->num_five);
         strcat(buf, body);
     // }
 
