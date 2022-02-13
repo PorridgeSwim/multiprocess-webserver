@@ -425,7 +425,8 @@ acc:
 					"Number of 2XX : %d \n"
 					"Number of 3XX : %d \n"
 					"Number of 4XX : %d \n"
-					"Number of 5XX : %d \n", area->num_two, area->num_three, area->num_four, area->num_five);
+					"Number of 5XX : %d \n"
+					"Sum: %d \n", area->num_two, area->num_three, area->num_four, area->num_five, area->num_two + area->num_three + area->num_four + area->num_five);
 			sem_post(&(area->sem));
 			key = 0;
 			goto acc;
