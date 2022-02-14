@@ -346,7 +346,9 @@ void * thr_worker(void *arg)
     const char *webRoot;
     struct queue *q ; 
     args = (struct args *)arg; 
-
+    char *tmp = &(requestLine[0]);
+    char* ntoabuf;
+    ntoabuf = malloc(sizeof(char) * 100);
     // servSock = args->servSock;
     webRoot = args->webRoot;
     q = args->q;
@@ -385,10 +387,10 @@ void * thr_worker(void *arg)
         }
 
         char *token_separators = "\t \r\n"; // tab, space, new line
-        method = strtok(requestLine, token_separators);
-        requestURI = strtok(NULL, token_separators);
-        httpVersion = strtok(NULL, token_separators);
-        char *extraThingsOnRequestLine = strtok(NULL, token_separators);
+        method = strtok_r(requestLine, token_separators, &tmp);
+        requestURI = strtok_r(NULL, token_separators, &tmp);
+        httpVersion = strtok_r(NULL, token_separators, &tmp);
+        char *extraThingsOnRequestLine = strtok_r(NULL, token_separators, &tmp);
 
         // check if we have 3 (and only 3) things in the request line
         if (!method || !requestURI || !httpVersion || 
@@ -468,7 +470,7 @@ loop_end:
          */
         
         fprintf(stderr, "%s \"%s %s %s\" %d %s\n",
-                inet_ntoa(clntAddr.sin_addr),
+                inet_ntop(AF_INET, &clntAddr.sin_addr, ntoabuf, 100),
                 method,
                 requestURI,
                 httpVersion,
