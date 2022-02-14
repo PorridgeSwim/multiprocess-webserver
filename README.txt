@@ -1,13 +1,10 @@
-This file should contain:
+# Team Flowers
 
-  - Your name & UNI (or those of all group members for group assignments)
-  - Homework assignment number
-  - Description for each part
+You Zhou (yz3883)
+Aoxue Wei (aw3389)
+Panyu Gao (pg2676)
 
-The description should indicate whether your solution for the part is working
-or not. You may also want to include anything else you would like to
-communicate to the grader, such as extra functionality you implemented or how
-you tried to fix your non-working code.
+# Homework 3
 
 part1: works well
 
