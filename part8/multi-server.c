@@ -13,6 +13,7 @@
 #include <signal.h>     /* for signal() */
 #include <sys/stat.h>   /* for stat() */
 #include <pthread.h>    /* for pthread_create */
+#include <errno.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
@@ -523,8 +524,12 @@ int main(int argc, char *argv[])
             die("Too many listening sockets");
         servSocks[i - 1] = createServerSocket(atoi(argv[i]));
         FD_SET(servSocks[i-1], &readfds);
-        fprintf(stderr, "servsocks: %d : %d \n", servSocks[i-1], atoi(argv[i]));
+        if(servSocks[i-1] + 1 > nfds){
+            nfds = servSocks[i-1]+1;
+        }
+        // fprintf(stderr, "servsocks: %d : %d \n", servSocks[i-1], atoi(argv[i]));
     }
+    // fprintf(stderr, "maxfds: %d \n", nfds);
     webRoot = argv[argc - 1];
     prev_readfds = readfds;
     // unsigned short servPort = atoi(argv[1]);
@@ -559,6 +564,15 @@ int main(int argc, char *argv[])
         int servs = 0;
         while(servs == 0){
             servs = select(nfds, &readfds, NULL, NULL, NULL);
+            if(servs < 0){
+                if(errno == EINTR){
+                    die("select failed");
+                }
+                else{
+                    servs = 0;
+                }
+            }
+            readfds = prev_readfds;
         }
         for(int validfd = 1; validfd <= nfds; validfd ++){
             if (FD_ISSET(validfd, &readfds)){
@@ -569,7 +583,7 @@ int main(int argc, char *argv[])
                 // break;
             }
         }
-        readfds = prev_readfds;
+        // readfds = prev_readfds;
     } // for (;;)
     queue_destroy(sock_queue);
     free(sock_queue);
