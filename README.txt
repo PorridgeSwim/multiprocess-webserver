@@ -9,6 +9,10 @@ or not. You may also want to include anything else you would like to
 communicate to the grader, such as extra functionality you implemented or how
 you tried to fix your non-working code.
 
+part1: works well
+
+part3: works well
+
 part5: Our solution is working. 
 task2: Two non-thread-safe functions are `strtok` and `inet_ntoa`. 
        The thread-safe version of `strtok` is `strtok_r`, we replace it with `strtok_r`. 
