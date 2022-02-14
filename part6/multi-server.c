@@ -240,6 +240,9 @@ void * thr_fn(void *arg)
     const char *webRoot;
     args = (struct args *)arg; 
 
+    char *tmp = &(requestLine[0]);
+    char* ntoabuf;
+    ntoabuf = malloc(sizeof(char) * 100);
     servSock = args->servSock;
     webRoot = args->webRoot;
 
@@ -276,10 +279,10 @@ void * thr_fn(void *arg)
         }
 
         char *token_separators = "\t \r\n"; // tab, space, new line
-        method = strtok(requestLine, token_separators);
-        requestURI = strtok(NULL, token_separators);
-        httpVersion = strtok(NULL, token_separators);
-        char *extraThingsOnRequestLine = strtok(NULL, token_separators);
+        method = strtok_r(requestLine, token_separators, &tmp);
+        requestURI = strtok_r(NULL, token_separators, &tmp);
+        httpVersion = strtok_r(NULL, token_separators, &tmp);
+        char *extraThingsOnRequestLine = strtok_r(NULL, token_separators, &tmp);
 
         // check if we have 3 (and only 3) things in the request line
         if (!method || !requestURI || !httpVersion || 
@@ -358,7 +361,7 @@ loop_end:
          */
         
         fprintf(stderr, "%s \"%s %s %s\" %d %s\n",
-                inet_ntoa(clntAddr.sin_addr),
+                inet_ntop(AF_INET, &clntAddr.sin_addr, ntoabuf, 100),
                 method,
                 requestURI,
                 httpVersion,
@@ -401,11 +404,11 @@ int main(int argc, char *argv[])
     // struct sockaddr_in clntAddr;
 
     void *tret; 
-
+    int err;
 
     for (; i<N_THREADS; i++) {
         
-        int err;
+        // int err;
         struct args *args; 
 
         args = malloc(sizeof(*args));
@@ -417,12 +420,23 @@ int main(int argc, char *argv[])
         if (err != 0)
             die("can’t create thread");
 
+        // err = pthread_join(thread_pool[i], &tret); 
+        // if (err != 0)
+        //     die("can’t join with thread");
+
+
+    } 
+    for (i=0; i<N_THREADS; i++) {
+
         err = pthread_join(thread_pool[i], &tret); 
+        fprintf(stderr, "line 429 : %d \n", i);
         if (err != 0)
             die("can’t join with thread");
 
 
     } 
+
+
 
     return 0;
 }

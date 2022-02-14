@@ -13,6 +13,7 @@
 #include <signal.h>     /* for signal() */
 #include <sys/stat.h>   /* for stat() */
 #include <pthread.h>    /* for pthread_create */
+#include <netinet/in.h>
 
 #define MAXPENDING 5    /* Maximum outstanding connection requests */
 
@@ -23,6 +24,26 @@ static void die(const char *message)
     perror(message);
     exit(1); 
 }
+
+
+// static unsigned int i2a(char* dest,unsigned int x) {
+//   register unsigned int tmp=x;
+//   register unsigned int len=0;
+//   if (x>=100) { *dest++=tmp/100+'0'; tmp=tmp%100; ++len; }
+//   if (x>=10) { *dest++=tmp/10+'0'; tmp=tmp%10; ++len; }
+//   *dest++=tmp+'0';
+//   return len+1;
+// }
+
+// char *inet_ntoa_r(struct in_addr in,char* buf) {
+//   unsigned int len;
+//   unsigned char *ip=(unsigned char*)&in;
+//   len=i2a(buf,ip[0]); buf[len]='.'; ++len;
+//   len+=i2a(buf+ len,ip[1]); buf[len]='.'; ++len;
+//   len+=i2a(buf+ len,ip[2]); buf[len]='.'; ++len;
+//   len+=i2a(buf+ len,ip[3]); buf[len]=0;
+//   return buf;
+// }
 
 /*
  * Create a listening socket bound to the given port.
@@ -238,11 +259,12 @@ void * thr_fn(void *arg)
     struct sockaddr_in clntAddr;
     const char *webRoot;
     args = (struct args *)arg; 
-
+    char *tmp = &(requestLine[0]);
     clntSock = args->clntSock;
     webRoot = args->webRoot;
     clntAddr = args->clntAddr;
-
+    char* ntoabuf;
+    ntoabuf = malloc(sizeof(char) * 100);
     // This is the first command after accept in original main
     FILE *clntFp = fdopen(clntSock, "r");
         if (clntFp == NULL)
@@ -263,10 +285,10 @@ void * thr_fn(void *arg)
     }
 
     char *token_separators = "\t \r\n"; // tab, space, new line
-    method = strtok(requestLine, token_separators);
-    requestURI = strtok(NULL, token_separators);
-    httpVersion = strtok(NULL, token_separators);
-    char *extraThingsOnRequestLine = strtok(NULL, token_separators);
+    method = strtok_r(requestLine, token_separators, &tmp);
+    requestURI = strtok_r(NULL, token_separators, &tmp);
+    httpVersion = strtok_r(NULL, token_separators, &tmp);
+    char *extraThingsOnRequestLine = strtok_r(NULL, token_separators, &tmp);
 
     // check if we have 3 (and only 3) things in the request line
     if (!method || !requestURI || !httpVersion || 
@@ -337,15 +359,14 @@ void * thr_fn(void *arg)
     statusCode = handleFileRequest(webRoot, requestURI, clntSock);
 
 loop_end:
-
     /*
      * Done with client request.
      * Log it, close the client socket, and go back to accepting
      * connection.
      */
-    
     fprintf(stderr, "%s \"%s %s %s\" %d %s\n",
-            inet_ntoa(clntAddr.sin_addr),
+            // inet_ntoa_r(clntAddr.sin_addr, ntoabuf),
+            inet_ntop(AF_INET, &clntAddr.sin_addr, ntoabuf, 100),
             method,
             requestURI,
             httpVersion,
